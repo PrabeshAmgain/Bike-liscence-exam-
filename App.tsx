@@ -4,7 +4,8 @@ import { Question, QuizStatus, QuizState } from './types';
 import { generateQuizQuestionsFromPDF } from './geminiService';
 
 const PASSING_THRESHOLD = 0.75; // 75%
-const TIME_LIMIT_SECONDS = 30 * 60; // 30 minutes
+const TOTAL_QUESTIONS = 25;
+const DEFAULT_TIME_LIMIT = 30 * 60; // 30 minutes
 
 const App: React.FC = () => {
   const [state, setState] = useState<QuizState>({
@@ -12,7 +13,7 @@ const App: React.FC = () => {
     currentIndex: 0,
     userAnswers: {},
     status: QuizStatus.LANDING,
-    timeLeft: TIME_LIMIT_SECONDS,
+    timeLeft: DEFAULT_TIME_LIMIT,
     score: 0,
     loadingStep: '',
   });
@@ -52,7 +53,7 @@ const App: React.FC = () => {
       ...prev,
       questions,
       status: QuizStatus.IN_PROGRESS,
-      timeLeft: TIME_LIMIT_SECONDS,
+      timeLeft: DEFAULT_TIME_LIMIT,
       currentIndex: 0,
       userAnswers: {},
     }));
@@ -122,14 +123,15 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-blue-600 text-white p-6">
         <div className="max-w-2xl w-full bg-white text-gray-800 rounded-3xl shadow-2xl p-8 text-center animate-fadeIn">
-          <div className="mb-6">
+          <div className="mb-6 flex justify-center gap-4">
             <i className="fa-solid fa-file-pdf text-6xl text-red-500"></i>
+            <i className="fa-solid fa-graduation-cap text-6xl text-blue-600"></i>
           </div>
           <h1 className="text-4xl font-black mb-4 text-blue-900 leading-tight">
-            प्रश्नावली अपलोड गर्नुहोस्
+            नेपाल सवारी चालक लिखित परीक्षा
           </h1>
           <p className="text-xl mb-8 text-gray-600 font-medium">
-            तपाईंको आधिकारिक PDF बाट परीक्षा दिनुहोस्
+            तपाईंको आधिकारिक PDF बाट २५ प्रश्नहरूको परीक्षा दिनुहोस्
           </p>
           
           <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl p-8 mb-8 transition-colors hover:border-blue-400">
@@ -159,9 +161,20 @@ const App: React.FC = () => {
                 <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform">
                   <i className="fa-solid fa-upload text-2xl text-blue-600"></i>
                 </div>
-                <span className="font-bold text-gray-500 uppercase tracking-wider text-sm">PDF फाइल छान्नुहोस्</span>
+                <span className="font-bold text-gray-500 uppercase tracking-wider text-sm">PDF फाइल अपलोड गर्नुहोस्</span>
               </button>
             )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 mb-8 text-left">
+            <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+              <p className="text-sm text-blue-500 font-bold uppercase tracking-wider">कुल प्रश्नहरू</p>
+              <p className="text-2xl font-bold text-blue-900">{TOTAL_QUESTIONS}</p>
+            </div>
+            <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+              <p className="text-sm text-blue-500 font-bold uppercase tracking-wider">समय सीमा</p>
+              <p className="text-2xl font-bold text-blue-900">३० मिनेट</p>
+            </div>
           </div>
 
           <button 
@@ -172,11 +185,11 @@ const App: React.FC = () => {
             disabled={!pdfBase64}
           >
             <span>परीक्षा सुरु गर्नुहोस्</span>
-            <i className="fa-solid fa-bolt"></i>
+            <i className="fa-solid fa-play"></i>
           </button>
           
           <p className="mt-6 text-xs text-gray-400 font-semibold italic">
-            Note: PDF extraction may take a moment. Visuals will be recreated using AI.
+            * AI will strictly follow questions and images from your PDF.
           </p>
         </div>
       </div>
@@ -220,7 +233,7 @@ const App: React.FC = () => {
                 <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Q {state.currentIndex + 1} / {state.questions.length}</p>
               </div>
             </div>
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-full font-black ${state.timeLeft < 300 ? 'bg-red-50 text-red-600 animate-pulse' : 'bg-gray-100 text-gray-600'}`}>
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-full font-black ${state.timeLeft < 180 ? 'bg-red-50 text-red-600 animate-pulse' : 'bg-gray-100 text-gray-600'}`}>
               <i className="fa-regular fa-clock"></i>
               <span>{formatTime(state.timeLeft)}</span>
             </div>
@@ -234,7 +247,7 @@ const App: React.FC = () => {
           <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-gray-100 mb-8 animate-fadeIn">
             <div className="bg-blue-50 px-8 py-4 border-b border-blue-100 flex justify-between items-center">
               <span className="text-xs font-black text-blue-500 uppercase tracking-widest">{currentQuestion.category}</span>
-              <span className="text-xs font-black text-gray-400 uppercase tracking-widest">Exact PDF Extract</span>
+              <span className="text-xs font-black text-gray-400 uppercase tracking-widest">Exact Extract</span>
             </div>
             
             <div className="p-8">
@@ -301,8 +314,6 @@ const App: React.FC = () => {
     );
   }
 
-  // Reuse logic for FINISHED and REVIEW from previous state, 
-  // ensuring Review displays images if available.
   if (state.status === QuizStatus.FINISHED) {
     const isPassed = state.score >= (PASSING_THRESHOLD * 100);
     const correctCount = Math.round((state.score / 100) * state.questions.length);
@@ -326,9 +337,8 @@ const App: React.FC = () => {
                 <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Correct</p>
                 <p className="text-xl font-bold text-green-600">{correctCount}</p>
               </div>
-              <div className="w-px bg-gray-200"></div>
               <div>
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total</p>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Qs</p>
                 <p className="text-xl font-bold text-blue-600">{state.questions.length}</p>
               </div>
             </div>
