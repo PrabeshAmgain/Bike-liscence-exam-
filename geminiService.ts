@@ -2,45 +2,37 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Question } from "./types";
 
-// Always use the process.env.API_KEY directly as a named parameter.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-// This is a partial extraction of the OCR knowledge base provided by the user
-// to help the model generate accurate questions.
-const KNOWLEDGE_BASE_CONTEXT = `
-Official Question Bank for Category A (Motorcycle) and K (Scooter/Moped) Driving License - Nepal 2078.
-Categories:
-1. Vehicle Operation (सवारी सञ्चालन सम्बन्धी ज्ञान)
-2. Traffic Rules & Laws (सवारी ऐन नियमसम्बन्धी ज्ञान)
-3. Technical & Mechanical (सवारी साधनको प्राविधिक तथा यान्त्रिक ज्ञान)
-4. Environment Pollution (वातावरण प्रदूषण सम्बन्धी अवधारणात्मक ज्ञान)
-5. Accident Awareness (दुर्घटना सचेतना सम्बन्धी ज्ञान)
-6. Traffic Signs (ट्राफिक सङ्केत सम्बन्धी ज्ञान)
-
-Examples from pool:
-- Zebra crossing is for: Pedestrians to cross the road (पैदल यात्रीले बाटो काट्न).
-- Steep climb gear: 1st gear (एक नम्बर गियरमा).
-- Overtaking side: Right side (दायाँ साइडबाट).
-- Driving after drinking: Prohibited (मदक पदार्थ सेवन गरेर चलाउनु हुँदैन).
-- Embossed Number Plate: Letter/numbers raised (प्लेटमा उठाएर अक्षर र अंक लेखेको).
-- Traffic light sequence: Green, Yellow, Red.
-`;
-
-export const generateQuizQuestions = async (): Promise<Question[]> => {
+/**
+ * Extracts questions from the PDF and handles image generation for visual questions.
+ */
+export const generateQuizQuestionsFromPDF = async (
+  pdfBase64?: string
+): Promise<Question[]> => {
   try {
+    const model = "gemini-3-flash-preview";
+    
+    // 1. Prepare prompt and parts
+    let contents: any = [];
+    if (pdfBase64) {
+      contents.push({
+        inlineData: {
+          data: pdfBase64,
+          mimeType: "application/pdf"
+        }
+      });
+      contents.push({
+        text: "Extract 25 random multiple-choice questions from this Nepal Driving License question bank PDF. Stictly maintain the original Nepali text for questions and options. If a question in the PDF has an image (like a traffic sign or road scenario), provide a very detailed description of that image in the 'imageDescription' field. Return as a JSON array."
+      });
+    } else {
+      // Fallback to text-based if no PDF
+      contents = "Generate 25 multiple-choice questions based on the official Nepal Category A/K driving license bank. If it's a traffic sign question, provide a description of the sign in 'imageDescription'. Return JSON.";
+    }
+
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Generate 25 multiple-choice questions for the Nepal Driving License (Category A/K) written exam based on the provided knowledge base context. 
-      The questions must be in Nepali. 
-      Ensure a mix of categories:
-      - 5 from Vehicle Operation
-      - 4 from Rules & Laws
-      - 3 from Technical/Mechanical
-      - 1 from Environment
-      - 2 from Accident Awareness
-      - 10 from Traffic Signs (describe the sign visually since text-only).
-      
-      Return as a JSON array of objects with fields: question, options (4 strings), correctIndex (0-3), and category.`,
+      model,
+      contents,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -51,59 +43,59 @@ export const generateQuizQuestions = async (): Promise<Question[]> => {
               question: { type: Type.STRING },
               options: { type: Type.ARRAY, items: { type: Type.STRING } },
               correctIndex: { type: Type.INTEGER },
-              category: { type: Type.STRING }
+              category: { type: Type.STRING },
+              imageDescription: { type: Type.STRING, description: "Detailed description of the image accompanying this question in the PDF, if any." }
             },
             required: ["question", "options", "correctIndex", "category"]
           }
         },
-        systemInstruction: `You are an expert in the Nepal Ministry of Physical Infrastructure and Transport question bank.
-        Use the following context to ensure accuracy: ${KNOWLEDGE_BASE_CONTEXT}.
-        All output MUST be in Nepali language where appropriate for questions and options.`
+        systemInstruction: "You are an expert OCR and exam creator. You MUST extract text exactly as it appears in the PDF. Do not summarize or alter the meaning. Use the provided PDF context only."
       }
     });
 
-    // Access the text property directly from the response.
     const text = response.text;
-    const questionsData = text ? JSON.parse(text) : [];
+    const rawQuestions = text ? JSON.parse(text) : [];
     
-    return questionsData.map((q: any, index: number) => ({
-      ...q,
-      id: `q-${index}`
-    }));
+    // 2. Process and generate images where needed
+    const finalQuestions: Question[] = [];
+    
+    for (let i = 0; i < rawQuestions.length; i++) {
+      const q = rawQuestions[i];
+      const questionObj: Question = {
+        ...q,
+        id: `q-${Date.now()}-${i}`
+      };
+
+      if (q.imageDescription && q.imageDescription.trim().length > 10) {
+        // Use gemini-2.5-flash-image to recreate the image
+        try {
+          const imgResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: [{
+              text: `Generate a clean, high-quality vector-style icon or realistic road scenario for a driving license test based on this description: ${q.imageDescription}. It should look like a professional traffic sign or official exam illustration. No text in the image except standard traffic symbols.`
+            }],
+            config: {
+              imageConfig: { aspectRatio: "1:1" }
+            }
+          });
+
+          for (const part of imgResponse.candidates[0].content.parts) {
+            if (part.inlineData) {
+              questionObj.imageUrl = `data:image/png;base64,${part.inlineData.data}`;
+              break;
+            }
+          }
+        } catch (imgErr) {
+          console.warn("Failed to generate image for question", i, imgErr);
+        }
+      }
+      
+      finalQuestions.push(questionObj);
+    }
+
+    return finalQuestions;
   } catch (error) {
-    console.error("Error generating questions:", error);
-    // Fallback static questions if API fails or rate limits
-    return FALLBACK_QUESTIONS;
+    console.error("Error in PDF question generation:", error);
+    return []; // Return empty or trigger fallback in App
   }
 };
-
-const FALLBACK_QUESTIONS: Question[] = [
-  {
-    id: "f1",
-    question: "जेब्रा क्रसिङ के का लागि प्रयोग गरिन्छ ?",
-    options: ["उभिन", "पैदल यात्रीले बाटो काट्न", "गाडी रोक्न", "गाडी कुदाउन"],
-    correctIndex: 1,
-    category: "सवारी सञ्चालन"
-  },
-  {
-    id: "f2",
-    question: "बढी उकालोमा सवारी चलाउँदा कुन गियरमा चलाउनुपर्दछ ?",
-    options: ["एक गियरमा", "दुई गियरमा", "तीन गियरमा", "चार गियरमा"],
-    correctIndex: 0,
-    category: "सवारी सञ्चालन"
-  },
-  {
-    id: "f3",
-    question: "ओभरटेक गर्दा कुन साइडबाट गर्नुपर्छ ?",
-    options: ["बायाँ साइडबाट", "दायाँ साइडबाट", "दुबै साइडबाट", "माथिका सबै"],
-    correctIndex: 1,
-    category: "सवारी सञ्चालन"
-  },
-  {
-    id: "f4",
-    question: "निम्नमध्ये सवारी चालकको कर्तव्य कुन हो?",
-    options: ["हिफाजतका साथ सवारी चलाउने", "ट्राफिक नियम पालन गर्ने", "निषेधित कार्य नगर्ने", "माथिका सबै"],
-    correctIndex: 3,
-    category: "सवारी सञ्चालन"
-  }
-];
