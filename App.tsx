@@ -18,9 +18,53 @@ const App: React.FC = () => {
     loadingStep: '',
   });
 
+  const [streak, setStreak] = useState<number>(0);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Load streak on mount
+  useEffect(() => {
+    const savedStreak = localStorage.getItem('streak_count');
+    const lastDate = localStorage.getItem('last_quiz_date');
+    const today = new Date().toISOString().split('T')[0];
+
+    if (savedStreak && lastDate) {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+      // Reset streak if more than one day missed
+      if (lastDate !== today && lastDate !== yesterdayStr) {
+        setStreak(0);
+        localStorage.setItem('streak_count', '0');
+      } else {
+        setStreak(parseInt(savedStreak));
+      }
+    }
+  }, []);
+
+  const updateStreak = useCallback(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const lastDate = localStorage.getItem('last_quiz_date');
+    let currentStreak = parseInt(localStorage.getItem('streak_count') || '0');
+
+    if (lastDate !== today) {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+      if (lastDate === yesterdayStr) {
+        currentStreak += 1;
+      } else {
+        currentStreak = 1;
+      }
+
+      localStorage.setItem('streak_count', currentStreak.toString());
+      localStorage.setItem('last_quiz_date', today);
+      setStreak(currentStreak);
+    }
+  }, []);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -60,6 +104,7 @@ const App: React.FC = () => {
   };
 
   const finishQuiz = useCallback(() => {
+    updateStreak();
     setState(prev => {
       let correct = 0;
       prev.questions.forEach((q, idx) => {
@@ -71,7 +116,7 @@ const App: React.FC = () => {
       return { ...prev, status: QuizStatus.FINISHED, score };
     });
     if (timerRef.current) clearInterval(timerRef.current);
-  }, []);
+  }, [updateStreak]);
 
   useEffect(() => {
     if (state.status === QuizStatus.IN_PROGRESS) {
@@ -122,7 +167,15 @@ const App: React.FC = () => {
   if (state.status === QuizStatus.LANDING) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-blue-600 text-white p-6">
-        <div className="max-w-2xl w-full bg-white text-gray-800 rounded-3xl shadow-2xl p-8 text-center animate-fadeIn">
+        <div className="max-w-2xl w-full bg-white text-gray-800 rounded-3xl shadow-2xl p-8 text-center animate-fadeIn relative overflow-hidden">
+          {/* Streak Badge */}
+          {streak > 0 && (
+            <div className="absolute top-6 right-6 bg-orange-100 text-orange-600 px-4 py-2 rounded-full flex items-center gap-2 shadow-sm animate-bounce">
+              <i className="fa-solid fa-fire text-xl"></i>
+              <span className="font-black text-lg">{streak} दिने स्ट्रीक!</span>
+            </div>
+          )}
+
           <div className="mb-6 flex justify-center gap-4">
             <i className="fa-solid fa-file-pdf text-6xl text-red-500"></i>
             <i className="fa-solid fa-graduation-cap text-6xl text-blue-600"></i>
@@ -320,13 +373,26 @@ const App: React.FC = () => {
 
     return (
       <div className="min-h-screen bg-gray-50 p-6 flex items-center justify-center">
-        <div className="max-w-2xl w-full bg-white rounded-3xl shadow-2xl p-10 text-center animate-fadeIn">
-          <div className="mb-6">
-            <div className={`inline-block p-6 rounded-full ${isPassed ? 'bg-green-100' : 'bg-red-100'}`}>
+        <div className="max-w-2xl w-full bg-white rounded-3xl shadow-2xl p-10 text-center animate-fadeIn relative overflow-hidden">
+          {/* Streak Celebration */}
+          {streak > 0 && (
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-orange-400 via-red-500 to-orange-400"></div>
+          )}
+
+          <div className="mb-6 flex flex-col items-center">
+            <div className={`inline-block p-6 rounded-full mb-4 ${isPassed ? 'bg-green-100' : 'bg-red-100'}`}>
               <i className={`fa-solid ${isPassed ? 'fa-trophy text-green-600' : 'fa-circle-exclamation text-red-600'} text-6xl`}></i>
             </div>
+            {streak > 1 && (
+              <div className="flex items-center gap-2 text-orange-600 font-black animate-pulse">
+                <i className="fa-solid fa-fire text-2xl"></i>
+                <span className="text-xl">तपाईंको {streak} दिने स्ट्रीक जारी छ!</span>
+              </div>
+            )}
           </div>
+          
           <h2 className="text-4xl font-black mb-2 text-gray-900">{isPassed ? 'बधाई छ!' : 'पुनः प्रयास गर्नुहोस्'}</h2>
+          
           <div className="bg-gray-50 rounded-3xl p-8 mb-8 mt-6">
             <div className="text-6xl font-black text-blue-900 mb-2">{state.score}%</div>
             <p className={`font-black uppercase tracking-widest ${isPassed ? 'text-green-600' : 'text-red-600'}`}>
@@ -337,12 +403,22 @@ const App: React.FC = () => {
                 <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Correct</p>
                 <p className="text-xl font-bold text-green-600">{correctCount}</p>
               </div>
+              <div className="w-px bg-gray-200"></div>
+              <div>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Streak</p>
+                <p className="text-xl font-bold text-orange-600 flex items-center gap-1">
+                  <i className="fa-solid fa-fire text-sm"></i>
+                  {streak}
+                </p>
+              </div>
+              <div className="w-px bg-gray-200"></div>
               <div>
                 <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Qs</p>
                 <p className="text-xl font-bold text-blue-600">{state.questions.length}</p>
               </div>
             </div>
           </div>
+
           <div className="space-y-4">
             <button onClick={() => setState(prev => ({ ...prev, status: QuizStatus.REVIEW }))} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-700 font-black py-4 rounded-2xl text-lg flex items-center justify-center gap-3 border-2 border-blue-200">
               <i className="fa-solid fa-magnifying-glass"></i><span>Review Answers</span>
